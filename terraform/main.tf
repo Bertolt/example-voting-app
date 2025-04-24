@@ -7,27 +7,13 @@ terraform {
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = ">= 2.0"
+      version = ">= 2.20.0"
     }
   }
 }
 
 provider "aws" {
   region = var.aws_region
-}
-
-provider "kubernetes" {
-  host                   = aws_eks_cluster.eks.endpoint
-  cluster_ca_certificate = base64decode(aws_eks_cluster.eks.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.auth.token
-}
-
-data "aws_eks_cluster" "eks" {
-  name = aws_eks_cluster.eks.name
-}
-
-data "aws_eks_cluster_auth" "auth" {
-  name = aws_eks_cluster.eks.name
 }
 
 data "aws_vpc" "default" {
@@ -41,35 +27,29 @@ data "aws_subnets" "default" {
   }
 }
 
-resource "aws_security_group" "eks_cluster_sg" {
-  name        = "eks-cluster-sg"
-  description = "Security group for EKS cluster"
-  vpc_id      = data.aws_vpc.default.id
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+  token                  = data.aws_eks_cluster_auth.auth.token
+}
 
-  ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+data "aws_eks_cluster_auth" "auth" {
+  name = module.eks.cluster_name
 }
 
 module "eks" {
   source          = "terraform-aws-modules/eks/aws"
+  version         = ">= 19.0.0"
   cluster_name    = var.cluster_name
   cluster_version = "1.29"
-  subnets         = data.aws_subnets.default.ids
-  vpc_id          = data.aws_vpc.default.id
 
-  manage_aws_auth_configmap = true
-  cluster_security_group_id = aws_security_group.eks_cluster_sg.id
+  enable_cluster_creator_admin_permissions = true
+
+  # Let the module create and manage the cluster SG
+  create_cluster_security_group = true
+
+  subnet_ids      = data.aws_subnets.default.ids
+  vpc_id          = data.aws_vpc.default.id
 
   eks_managed_node_groups = {
     default = {
@@ -82,8 +62,41 @@ module "eks" {
   }
 }
 
-resource "kubernetes_namespace" "app" {
-  metadata {
-    name = "example-voting-app"
-  }
+
+# Automatically apply all YAML manifests in ./k8s-manifests folder
+locals {
+  manifests = fileset("${path.module}/k8s-manifests", "*.yaml")
 }
+
+resource "kubernetes_manifest" "resources" {
+  # Create multiple K8s resources by iterating over manifest files
+  # Converts list of files into a map where key and value are both the filename
+  for_each = { for file in local.manifests : file => file }
+
+  # Reads and decodes YAML manifest files from k8s-manifests directory 
+  # path.module refers to directory containing this Terraform file
+  manifest = yamldecode(file("${path.module}/k8s-manifests/${each.key}"))
+
+  # Ensures cluster and namespace exist before creating resources
+  depends_on = [module.eks, kubernetes_namespace.app]
+}
+
+# resource "aws_security_group" "eks_cluster_sg" {
+#   name        = "eks-cluster-sg"
+#   description = "Security group for EKS cluster"
+#   vpc_id      = data.aws_vpc.default.id
+
+#   ingress {
+#     from_port   = 0
+#     to_port     = 0
+#     protocol    = "-1"
+#     cidr_blocks = ["0.0.0.0/0"]
+#   }
+
+#   egress {
+#     from_port   = 0
+#     to_port     = 0
+#     protocol    = "-1"
+#     cidr_blocks = ["0.0.0.0/0"]
+#   }
+# }
