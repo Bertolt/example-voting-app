@@ -43,7 +43,11 @@ module "eks" {
   cluster_name    = var.cluster_name
   cluster_version = "1.29"
 
+
   enable_cluster_creator_admin_permissions = true
+
+  cluster_endpoint_public_access = true
+  create_kms_key = false
 
   # Let the module create and manage the cluster SG
   create_cluster_security_group = true
@@ -63,23 +67,23 @@ module "eks" {
 }
 
 
-# Automatically apply all YAML manifests in ./k8s-manifests folder
-locals {
-  manifests = fileset("${path.module}/k8s-manifests", "*.yaml")
-}
+# # Automatically apply all YAML manifests in ./k8s-manifests folder
+# locals {
+#   manifests = fileset("${path.module}/k8s-manifests", "*.yaml")
+# }
 
-resource "kubernetes_manifest" "resources" {
-  # Create multiple K8s resources by iterating over manifest files
-  # Converts list of files into a map where key and value are both the filename
-  for_each = { for file in local.manifests : file => file }
+# resource "kubernetes_manifest" "resources" {
+#   # Create multiple K8s resources by iterating over manifest files
+#   # Converts list of files into a map where key and value are both the filename
+#   for_each = { for file in local.manifests : file => file }
 
-  # Reads and decodes YAML manifest files from k8s-manifests directory 
-  # path.module refers to directory containing this Terraform file
-  manifest = yamldecode(file("${path.module}/k8s-manifests/${each.key}"))
+#   # Reads and decodes YAML manifest files from k8s-manifests directory 
+#   # path.module refers to directory containing this Terraform file
+#   manifest = yamldecode(file("${path.module}/k8s-manifests/${each.key}"))
 
-  # Ensures cluster and namespace exist before creating resources
-  depends_on = [module.eks, kubernetes_namespace.app]
-}
+#   # Ensures cluster and namespace exist before creating resources
+#   depends_on = [module.eks]
+# }
 
 # resource "aws_security_group" "eks_cluster_sg" {
 #   name        = "eks-cluster-sg"
